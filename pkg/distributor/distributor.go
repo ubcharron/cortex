@@ -527,15 +527,22 @@ func (d *Distributor) Push(ctx context.Context, req *client.WriteRequest) (*clie
 
 	now := time.Now()
 	totalN := validatedSamples + len(validatedMetadata)
-	if !d.ingestionRateLimiter.AllowN(now, userID, totalN) {
+	allowed, hard := d.ingestionRateLimiter.AllowN(now, userID, totalN), false
+	if !allowed {
 		// Ensure the request slice is reused if the request is rate limited.
 		client.ReuseSlice(req.Timeseries)
-
-		// Return a 4xx here to have the client discard the data and not retry. If a client
-		// is sending too much data consistently we will unlikely ever catch up otherwise.
-		validation.DiscardedSamples.WithLabelValues(validation.RateLimited, userID).Add(float64(validatedSamples))
-		validation.DiscardedMetadata.WithLabelValues(validation.RateLimited, userID).Add(float64(len(validatedMetadata)))
-		return nil, httpgrpc.Errorf(http.StatusTooManyRequests, "ingestion rate limit (%v) exceeded while adding %d samples and %d metadata", d.ingestionRateLimiter.Limit(now, userID), validatedSamples, len(validatedMetadata))
+		var code int
+		if hard {
+			// Return a 4xx here to have the client discard the data and not retry.
+			code = http.StatusTooManyRequests
+			validation.DiscardedSamples.WithLabelValues(validation.RateLimited, userID).Add(float64(validatedSamples))
+			validation.DiscardedMetadata.WithLabelValues(validation.RateLimited, userID).Add(float64(len(validatedMetadata)))
+		} else {
+			// Return a 5xx here to have the client retry.
+			code = http.StatusInsufficientStorage
+			validation.RateLimitedSamples.WithLabelValues(userID).Add(float64(validatedSamples))
+		}
+		return nil, httpgrpc.Errorf(code, "ingestion rate limit (%v) exceeded while adding %d samples and %d metadata", d.ingestionRateLimiter.Limit(now, userID), validatedSamples, len(validatedMetadata))
 	}
 
 	subRing := d.ingestersRing.(ring.ReadRing)
