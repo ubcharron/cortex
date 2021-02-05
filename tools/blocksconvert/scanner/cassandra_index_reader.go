@@ -16,7 +16,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/chunk/cassandra"
 )
 
-const NB_RANGES = 512
+const nbTokenRanges = 512
 
 type cassandraIndexReader struct {
 	log                    log.Logger
@@ -52,7 +52,7 @@ func (r *cassandraIndexReader) IndexTableNames(ctx context.Context) ([]string, e
 	return client.ListTables(ctx)
 }
 
-type TokenRange struct {
+type tokenRange struct {
 	start int64
 	end   int64
 }
@@ -69,21 +69,21 @@ func (r *cassandraIndexReader) ReadIndexEntries(ctx context.Context, tableName s
 
 	session := client.GetReadSession()
 
-	rangesCh := make(chan TokenRange, NB_RANGES)
+	rangesCh := make(chan tokenRange, nbTokenRanges)
 
 	var step, n, start int64
 
-	step = int64(math.MaxUint64 / NB_RANGES)
+	step = int64(math.MaxUint64 / nbTokenRanges)
 
-	for n = 0; n < NB_RANGES; n++ {
+	for n = 0; n < nbTokenRanges; n++ {
 		start = math.MinInt64 + n*step
 		end := start + step
 
-		if n == (NB_RANGES - 1) {
+		if n == (nbTokenRanges - 1) {
 			end = math.MaxInt64
 		}
 
-		t := TokenRange{start: start, end: end}
+		t := tokenRange{start: start, end: end}
 		rangesCh <- t
 	}
 
